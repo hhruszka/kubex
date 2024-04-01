@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
@@ -36,6 +37,7 @@ var (
 	pod        string
 	container  string
 	debug      bool
+	format     string
 )
 
 var ExitCodes map[int]string = map[int]string{
@@ -128,6 +130,84 @@ func getStatefulSets(clientset *kubernetes.Clientset, namespace string) (*v1.Sta
 	return statefulSets, nil
 }
 
+// mapToLabelSelector converts a map of key-value pairs to a Kubernetes label selector string.
+func mapToLabelSelector(labels map[string]string) string {
+	var selectorParts []string
+	for key, value := range labels {
+		selectorParts = append(selectorParts, fmt.Sprintf("%s=%s", key, value))
+	}
+	return strings.Join(selectorParts, ",")
+}
+
+func getUniquePods(clientset *kubernetes.Clientset, namespace string) (int, []corev1.Pod, error) {
+	var uniquePods []corev1.Pod
+
+	var deploymentPods map[string]int = make(map[string]int)
+	deployments, err := getDeployments(clientset, namespace)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	for _, deployment := range deployments.Items {
+		// to find all pods that are part of a given deployment we need to use deployment.Spec.Selector.MatchLabels
+		// from the deployment. This is essential.
+		options := metaV1.ListOptions{LabelSelector: mapToLabelSelector(deployment.Spec.Selector.MatchLabels)}
+		pods, err := getPods(clientset, namespace, options)
+		if err != nil {
+			continue
+		}
+		// we are interested only in one instance of a pod
+		if len(pods) > 0 {
+			uniquePods = append(uniquePods, pods[0])
+		}
+		for _, pod := range pods {
+			deploymentPods[pod.Name]++
+		}
+	}
+	//log(fmt.Sprintf("[+] Found %d pods in %d deployments\n", len(deploymentPods), len(deployments.Items)))
+
+	var statefulSetsPods map[string]int = make(map[string]int)
+	statefulSets, err := getStatefulSets(clientset, namespace)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	for _, statefulSet := range statefulSets.Items {
+		// to find all pods that are part of a given deployment we need to use statefulSet.Spec.Selector.MatchLabels
+		// from the deployment. This is essential.
+		options := metaV1.ListOptions{LabelSelector: mapToLabelSelector(statefulSet.Spec.Selector.MatchLabels)}
+		pods, err := getPods(clientset, namespace, options)
+		if err != nil {
+			continue
+		}
+		// we are interested only in one instance of a pod
+		//podCount += len(pods)
+		if len(pods) > 0 {
+			uniquePods = append(uniquePods, pods[0])
+		}
+		for _, pod := range pods {
+			statefulSetsPods[pod.Name]++
+		}
+	}
+	//log(fmt.Sprintf("[+] Found %d pods in %d statefulsets\n", len(statefulSetsPods), len(statefulSets.Items)))
+
+	podsList, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metaV1.ListOptions{})
+	if err != nil {
+		return 0, nil, err
+	}
+	for _, pod := range podsList.Items {
+		if _, ok := deploymentPods[pod.Name]; ok {
+			continue
+		}
+		if _, ok := statefulSetsPods[pod.Name]; ok {
+			continue
+		}
+		uniquePods = append(uniquePods, pod)
+	}
+
+	return len(podsList.Items), uniquePods, nil
+}
+
 func exec(clientset *kubernetes.Clientset, config *rest.Config, namespace string, podName string, containerName string, cmd []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, tty bool) (int, error) {
 
 	//command := []string{cmd}
@@ -172,25 +252,42 @@ func exec(clientset *kubernetes.Clientset, config *rest.Config, namespace string
 	return 0, nil
 }
 
-func Exec(clientset *kubernetes.Clientset, config *rest.Config, namespace string, podName string, containerName string, args []string, stdin io.Reader) {
+type ExecutionStatus struct {
+	Pod       string   `json:"Pod"`
+	Container string   `json:"Container"`
+	RetCode   int      `json:"RetCode"`
+	Error     []string `json:"Error"`
+	Stdout    []string `json:"Stdout"`
+	Stderr    []string `json:"Stderr"`
+}
+
+type EnumerationStatus struct {
+	Stdin     string             `json:"Stdin"`
+	Args      []string           `json:"Args"`
+	Namespace string             `json:"Namespace"`
+	Statuses  []*ExecutionStatus `json:"Statuses"`
+}
+
+func NewEnumerationStatus(pipeCommand string, command []string, namespace string) *EnumerationStatus {
+	if len(pipeCommand) > 0 {
+		pipeCommand = fmt.Sprintf("%s... too long", pipeCommand[:40])
+	}
+	return &EnumerationStatus{Stdin: pipeCommand, Args: command, Namespace: namespace}
+}
+
+func NewExecutionStatus(pod string, container string, retCode int, error string, stdout string, stderr string) *ExecutionStatus {
+	return &ExecutionStatus{Pod: pod, Container: container, RetCode: retCode, Error: strings.Split(error, "\n"), Stdout: strings.Split(stdout, "\n"), Stderr: strings.Split(stderr, "\n")}
+}
+
+func Exec(clientset *kubernetes.Clientset, config *rest.Config, namespace string, podName string, containerName string, args []string, stdin io.Reader) *ExecutionStatus {
 	var stdout, stderr bytes.Buffer
+	var errMessage string
 
 	retCode, err := exec(clientset, config, namespace, podName, containerName, args, stdin, &stdout, &stderr, false)
-	fmt.Printf("CONTAINER: %s/%s\n", podName, containerName)
-	fmt.Printf("Returned exit code: %d [%s]\n", retCode, getExitCodeDescription(retCode))
 	if err != nil {
-		fmt.Printf("Returned error: %s\n", err.Error())
+		errMessage = err.Error()
 	}
-	if stdout.Len() > 0 {
-		fmt.Printf("Standard output:\n%s\n", stdout.String())
-	} else {
-		fmt.Println("Standard output:")
-	}
-	if stderr.Len() > 0 {
-		fmt.Printf("Standard error:\n%s\n", stderr.String())
-	} else {
-		fmt.Println("Standard error:")
-	}
+	return NewExecutionStatus(podName, containerName, retCode, errMessage, stdout.String(), stderr.String())
 }
 
 func run(args []string) error {
@@ -199,29 +296,22 @@ func run(args []string) error {
 	//Prepare to capture stdin
 	var stdinBuf bytes.Buffer
 
-	if pod != "" {
-		if fi, err := os.Stdin.Stat(); err == nil {
-			if (fi.Mode() & os.ModeCharDevice) == 0 {
-				_, err = io.Copy(&stdinBuf, os.Stdin)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to read stdin: %v\n", err)
-					os.Exit(1)
-				}
+	if fi, err := os.Stdin.Stat(); err == nil {
+		if (fi.Mode() & os.ModeCharDevice) == 0 {
+			_, err = io.Copy(&stdinBuf, os.Stdin)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to read stdin: %v\n", err)
+				os.Exit(1)
 			}
 		}
-
-		if stdinBuf.Len() > 0 && len(args) == 0 {
-			// no command to pipe to has been providing defaulting to shell
-			args = []string{"sh"}
-		}
-		if stdinBuf.Len() > 40 {
-			fmt.Printf("PIPED COMMAND: %s ... too long to display\n", string(stdinBuf.Bytes()[:40]))
-		} else {
-			fmt.Printf("PIPED COMMAND: %s\n", strings.Trim(string(stdinBuf.Bytes()), "\n"))
-		}
-		fmt.Printf("COMMAND: %q\n\n", args)
 	}
 
+	if stdinBuf.Len() > 0 && len(args) == 0 {
+		// no command to pipe to has been providing defaulting to shell
+		args = []string{"sh"}
+	}
+
+	enumStatus := NewEnumerationStatus(stdinBuf.String(), args, namespace)
 	switch {
 	case pod != "" && container == "":
 		_pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), pod, metaV1.GetOptions{})
@@ -235,8 +325,8 @@ func run(args []string) error {
 				// each execution of command will empty stdin therefore
 				// we need to preserve it and recreate for each iteration
 				streamedCmd := bytes.NewBuffer(stdinBuf.Bytes())
-				Exec(clientset, config, namespace, _pod.Name, _container.Name, args, streamedCmd)
-				fmt.Println()
+				status := Exec(clientset, config, namespace, _pod.Name, _container.Name, args, streamedCmd)
+				enumStatus.Statuses = append(enumStatus.Statuses, status)
 			}
 		}
 	case pod != "" && container != "":
@@ -250,22 +340,51 @@ func run(args []string) error {
 			os.Exit(1)
 		}
 
-		Exec(clientset, config, namespace, pod, container, args, &stdinBuf)
+		status := Exec(clientset, config, namespace, pod, container, args, &stdinBuf)
+		enumStatus.Statuses = append(enumStatus.Statuses, status)
 	case pod == "" && container == "":
 		pods, err := getPods(clientset, namespace, metaV1.ListOptions{})
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		fmt.Printf("Found %d pods in %s namespace\n\n", len(pods), namespace)
+
 		for _, _pod := range pods {
-			//fmt.Printf("Pod %s has %d containers: \n", _pod.Name, len(_pod.Spec.Containers))
-			for _, _container := range _pod.Spec.Containers {
-				fmt.Printf("%s/%s\n", _pod.Name, _container.Name)
+			if _pod.Status.Phase == "Running" {
+				for _, _container := range _pod.Spec.Containers {
+					// each execution of command will empty stdin therefore
+					// we need to preserve it and recreate for each iteration
+					streamedCmd := bytes.NewBuffer(stdinBuf.Bytes())
+					status := Exec(clientset, config, namespace, _pod.Name, _container.Name, args, streamedCmd)
+					enumStatus.Statuses = append(enumStatus.Statuses, status)
+				}
 			}
+		}
+	}
+
+	switch format {
+	case "json":
+		jsonBuff, err := json.MarshalIndent(enumStatus, "", "    ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string((jsonBuff)))
+	case "text":
+		fmt.Printf("STDIN COMMAND: %s\n", enumStatus.Stdin)
+		fmt.Printf("COMMAND: %q\n\n", enumStatus.Args)
+		fmt.Printf("Namespace: %s\n", enumStatus.Namespace)
+		for _, status := range enumStatus.Statuses {
+			fmt.Printf("CONTAINER: %s/%s\n", status.Pod, status.Container)
+			fmt.Printf("Returned exit code: %d [%s]\n", status.RetCode, getExitCodeDescription(status.RetCode))
+			if strings.Trim(strings.Join(status.Error, "\n"), "\n") != "" {
+				fmt.Printf("Returned error: %s\n", strings.Join(status.Error, "\n"))
+			}
+			fmt.Printf("Standard output:\n%s", strings.Join(status.Stdout, "\n"))
+			fmt.Printf("Standard error:\n%s", strings.Join(status.Stderr, "\n"))
 			fmt.Println()
 		}
 	}
+
 	return nil
 }
 
@@ -289,6 +408,7 @@ func main() {
 	cmd.Flags().StringVarP(&pod, "pod", "p", "", "a pod name, if not provided then all containers in a namespace will be enumerated.")
 	cmd.Flags().StringVarP(&container, "container", "c", "", "a container name")
 	cmd.Flags().BoolVarP(&debug, "debug", "d", false, "debug")
+	cmd.Flags().StringVarP(&format, "output", "o", "text", "Output format: text, or json")
 
 	// Disable automatic printing of usage when an error occurs
 	cmd.SilenceUsage = true
