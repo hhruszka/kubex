@@ -243,12 +243,7 @@ func exec(clientset *kubernetes.Clientset, config *rest.Config, namespace string
 	})
 
 	//fmt.Println(stdout)
-	var execError exec2.CodeExitError
-	if err != nil && !errors.As(err, &execError) {
-		return -1, err
-	} else if err != nil && errors.As(err, &execError) {
-		return execError.Code, err
-	}
+	git
 	return 0, nil
 }
 
