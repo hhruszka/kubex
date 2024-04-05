@@ -306,8 +306,12 @@ func run(args []string) error {
 		}
 	}
 
+	if stdinBuf.Len() == 0 && len(args) == 0 {
+		return errors.New("No commands provided either by stdin or arguments.")
+	}
+
 	if stdinBuf.Len() > 0 && len(args) == 0 {
-		// no command to pipe to has been providing defaulting to shell
+		// no command to pipe has been providing defaulting to shell
 		args = []string{"sh"}
 	}
 
@@ -316,7 +320,7 @@ func run(args []string) error {
 	case pod != "" && container == "":
 		_pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), pod, metaV1.GetOptions{})
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println(err.Error())
 			os.Exit(1)
 		}
 
@@ -332,7 +336,7 @@ func run(args []string) error {
 	case pod != "" && container != "":
 		_pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), pod, metaV1.GetOptions{})
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println(err.Error())
 			os.Exit(1)
 		}
 		if _pod.Status.Phase != "Running" {
@@ -345,7 +349,7 @@ func run(args []string) error {
 	case pod == "" && container == "":
 		pods, err := getPods(clientset, namespace, metaV1.ListOptions{})
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println(err.Error())
 			os.Exit(1)
 		}
 
@@ -366,7 +370,8 @@ func run(args []string) error {
 	case "json":
 		jsonBuff, err := json.MarshalIndent(enumStatus, "", "    ")
 		if err != nil {
-			return err
+			fmt.Println(err.Error())
+			os.Exit(1)
 		}
 		fmt.Println(string((jsonBuff)))
 	case "text":
@@ -390,7 +395,7 @@ func run(args []string) error {
 
 func main() {
 	var cmd = &cobra.Command{
-		Use:   "k8sexec",
+		Use:   "k8sexec [flags] [args]",
 		Short: "k8sexec is a command line application that executes commands in containers",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
