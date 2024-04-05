@@ -243,7 +243,6 @@ func exec(clientset *kubernetes.Clientset, config *rest.Config, namespace string
 	})
 
 	//fmt.Println(stdout)
-	git
 	return 0, nil
 }
 
@@ -413,6 +412,7 @@ func main() {
 	// Disable automatic printing of usage when an error occurs
 	cmd.SilenceUsage = true
 
+	// support for '--'
 	cmd.Flags().SetInterspersed(false)
 
 	// Custom PreRunE to check for parse errors
