@@ -243,7 +243,10 @@ func exec(clientset *kubernetes.Clientset, config *rest.Config, namespace string
 	})
 
 	//fmt.Println(stdout)
-	git
+	if err != nil {
+		return -1, err
+	}
+
 	return 0, nil
 }
 
@@ -264,7 +267,7 @@ type EnumerationStatus struct {
 }
 
 func NewEnumerationStatus(pipeCommand string, command []string, namespace string) *EnumerationStatus {
-	if len(pipeCommand) > 0 {
+	if len(pipeCommand) > 40 {
 		pipeCommand = fmt.Sprintf("%s... too long", pipeCommand[:40])
 	}
 	return &EnumerationStatus{Stdin: pipeCommand, Args: command, Namespace: namespace}
