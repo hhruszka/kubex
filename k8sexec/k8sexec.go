@@ -38,7 +38,7 @@ var ExitCodes map[int]string = map[int]string{
 	-1:  "Internal app error",
 	0:   "Success",
 	1:   "General error, unspecified error",
-	2:   "Misuse of shell builtins",
+	2:   "Incorrect usage or syntax of the command",
 	126: "Command cannot execute",
 	127: "Command not found",
 	128: "Invalid argument to exit",

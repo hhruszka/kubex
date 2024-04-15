@@ -36,7 +36,7 @@ var (
 	format     string
 )
 
-func Init() {
+func k8sInit() {
 	var err error
 
 	config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
@@ -66,15 +66,20 @@ func NewEnumerationStatus(pipeCommand string, command []string, namespace string
 	return &EnumerationStatus{Stdin: pipeCommand, Args: command, Namespace: namespace}
 }
 
-func NewExecutionStatus(pod string, container string, retCode int, error string, stdout string, stderr string) *ExecutionStatus {
+func NewExecutionStatus(pod string, container string, retCode int, error string, stdout string, stderr string) *k8sexec.ExecutionStatus {
 	return &k8sexec.ExecutionStatus{Pod: pod, Container: container, RetCode: retCode, Error: strings.Split(error, "\n"), Stdout: strings.Split(stdout, "\n"), Stderr: strings.Split(stderr, "\n")}
 }
 
 func run(args []string) error {
-	Init()
+	k8sInit()
 
 	//Prepare to capture stdin
 	var stdinBuf bytes.Buffer
+
+	k8s, err := k8sexec.NewK8SExec(kubeconfig, namespace)
+	if err != nil {
+		return err
+	}
 
 	if fi, err := os.Stdin.Stat(); err == nil {
 		if (fi.Mode() & os.ModeCharDevice) == 0 {
@@ -109,7 +114,8 @@ func run(args []string) error {
 				// each execution of command will empty stdin therefore
 				// we need to preserve it and recreate for each iteration
 				streamedCmd := bytes.NewBuffer(stdinBuf.Bytes())
-				status := k8sexec.Exec(_pod.Name, _container.Name, args, streamedCmd)
+
+				status := k8s.Exec(_pod.Name, _container.Name, args, streamedCmd)
 				enumStatus.Statuses = append(enumStatus.Statuses, status)
 			}
 		}
@@ -124,10 +130,10 @@ func run(args []string) error {
 			os.Exit(1)
 		}
 
-		status := Exec(pod, container, args, &stdinBuf)
+		status := k8s.Exec(pod, container, args, &stdinBuf)
 		enumStatus.Statuses = append(enumStatus.Statuses, status)
 	case pod == "" && container == "":
-		pods, err := k8sexec.GetPods(namespace, metaV1.ListOptions{})
+		pods, err := k8s.GetPods(metaV1.ListOptions{})
 		if err != nil {
 			fmt.Println(err.Error())
 			os.Exit(1)
@@ -139,7 +145,7 @@ func run(args []string) error {
 					// each execution of command will empty stdin therefore
 					// we need to preserve it and recreate for each iteration
 					streamedCmd := bytes.NewBuffer(stdinBuf.Bytes())
-					status := Exec(clientset, config, namespace, _pod.Name, _container.Name, args, streamedCmd)
+					status := k8s.Exec(_pod.Name, _container.Name, args, streamedCmd)
 					enumStatus.Statuses = append(enumStatus.Statuses, status)
 				}
 			}
@@ -160,7 +166,7 @@ func run(args []string) error {
 		fmt.Printf("Namespace: %s\n", enumStatus.Namespace)
 		for _, status := range enumStatus.Statuses {
 			fmt.Printf("CONTAINER: %s/%s\n", status.Pod, status.Container)
-			fmt.Printf("Returned exit code: %d [%s]\n", status.RetCode, getExitCodeDescription(status.RetCode))
+			fmt.Printf("Returned exit code: %d [%s]\n", status.RetCode, k8sexec.GetExitCodeDescription(status.RetCode))
 			if strings.Trim(strings.Join(status.Error, "\n"), "\n") != "" {
 				fmt.Printf("Returned error: %s\n", strings.Join(status.Error, "\n"))
 			}
