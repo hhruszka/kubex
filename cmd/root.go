@@ -66,10 +66,6 @@ func NewEnumerationStatus(pipeCommand string, command []string, namespace string
 	return &EnumerationStatus{Stdin: pipeCommand, Args: command, Namespace: namespace}
 }
 
-func NewExecutionStatus(pod string, container string, retCode int, error string, stdout string, stderr string) *k8sexec.ExecutionStatus {
-	return &k8sexec.ExecutionStatus{Pod: pod, Container: container, RetCode: retCode, Error: strings.Split(error, "\n"), Stdout: strings.Split(stdout, "\n"), Stderr: strings.Split(stderr, "\n")}
-}
-
 func run(args []string) error {
 	k8sInit()
 
@@ -85,14 +81,14 @@ func run(args []string) error {
 		if (fi.Mode() & os.ModeCharDevice) == 0 {
 			_, err = io.Copy(&stdinBuf, os.Stdin)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to read stdin: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "Failed to read stdin: %v\n", err)
 				os.Exit(1)
 			}
 		}
 	}
 
 	if stdinBuf.Len() == 0 && len(args) == 0 {
-		return errors.New("No commands provided either by stdin or arguments.")
+		return errors.New("no commands provided either by stdin or arguments")
 	}
 
 	if stdinBuf.Len() > 0 && len(args) == 0 {
@@ -159,7 +155,7 @@ func run(args []string) error {
 			fmt.Println(err.Error())
 			os.Exit(1)
 		}
-		fmt.Println(string((jsonBuff)))
+		fmt.Println(string(jsonBuff))
 	case "text":
 		fmt.Printf("STDIN COMMAND: %s\n", enumStatus.Stdin)
 		fmt.Printf("COMMAND: %q\n\n", enumStatus.Args)
@@ -219,7 +215,7 @@ func init() {
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		// When a non-existing option is invoked, print the usage
 		if err := c.Usage(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error printing usage: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "Error printing usage: %v\n", err)
 		}
 		// Return the original error to stop execution
 		return err
