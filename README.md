@@ -1,4 +1,4 @@
-cnfexec is a command line application that executes commands in all containers in a given namespace or in a selected pod. 
+cnfexec is a command line application that executes commands and/or scripts in all containers in a given namespace or in a selected pod. 
 
 ### Usage
 ```
