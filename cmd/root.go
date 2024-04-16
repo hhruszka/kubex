@@ -33,8 +33,12 @@ var (
 	pod        string
 	container  string
 	debug      bool
+	version    bool
 	format     string
 )
+
+var appName string = filepath.Base(os.Args[0])
+var appVersion string
 
 func k8sInit() {
 	var err error
@@ -67,6 +71,12 @@ func NewEnumerationStatus(pipeCommand string, command []string, namespace string
 }
 
 func run(args []string) error {
+
+	if version {
+		fmt.Println(appName, appVersion)
+		return nil
+	}
+
 	k8sInit()
 
 	//Prepare to capture stdin
@@ -176,8 +186,8 @@ func run(args []string) error {
 }
 
 var cmd = &cobra.Command{
-	Use:   "k8sexec [flags] [args]",
-	Short: "k8sexec is a command line application that executes commands in containers",
+	Use:   appName + " [flags] [args]",
+	Short: appName + " is a command line application that executes commands in all containers in a given namespace or in a selected pods",
 	Long:  ``,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return run(args)
@@ -194,7 +204,8 @@ func init() {
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "CNF namespace")
 	cmd.Flags().StringVarP(&pod, "pod", "p", "", "a pod name, if not provided then all containers in a namespace will be enumerated.")
 	cmd.Flags().StringVarP(&container, "container", "c", "", "a container name")
-	cmd.Flags().BoolVarP(&debug, "debug", "d", false, "debug")
+	//cmd.Flags().BoolVarP(&debug, "debug", "d", false, "debug")
+	cmd.Flags().BoolVarP(&version, "version", "v", false, "prints "+appName+" version")
 	cmd.Flags().StringVarP(&format, "output", "o", "text", "Output format: text, or json")
 
 	// Disable automatic printing of usage when an error occurs

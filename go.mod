@@ -1,6 +1,6 @@
 module k8sexec
 
-go 1.22
+go 1.22.1
 
 require (
 	github.com/hhruszka/k8sexec v1.0.0-beta
